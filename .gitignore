@@ -1,0 +1,4 @@
+.env
+.venv/
+beschreibung.txt
+Pipfile.lock
