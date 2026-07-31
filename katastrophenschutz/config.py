@@ -12,12 +12,21 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
 
+
+def _secret(key: str, default: str = "") -> str:
+    """Liest einen Wert aus Streamlit-Secrets (Cloud) oder os.environ (lokal)."""
+    try:
+        import streamlit as st
+        return st.secrets.get(key, os.getenv(key, default))
+    except Exception:
+        return os.getenv(key, default)
+
 # ── LLM-Modelle ───────────────────────────────────────────────
 GEMINI_MODEL       = os.getenv("GEMINI_MODEL",       "gemini-2.0-flash")
 GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini-2.0-flash-lite")
 
 # ── Datenbank ─────────────────────────────────────────────────
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://localhost/katastrophenschutz")
+DATABASE_URL = _secret("DATABASE_URL", "postgresql://localhost/katastrophenschutz")
 
 # ── Krankenhäuser (A2A-Netz) ──────────────────────────────────
 KRANKENHAEUSER: dict[str, dict] = {
@@ -77,7 +86,7 @@ STANDORT: Industriestraße 47, Kreuzung B27 – ca. 8 km vom Stadtzentrum
 
 def get_llm(temperature: float = 0.1, model: str = GEMINI_MODEL) -> ChatGoogleGenerativeAI:
     """Erstellt eine ChatGoogleGenerativeAI-Instanz mit dem konfigurierten Modell."""
-    api_key = os.getenv("GOOGLE_API_KEY")
+    api_key = _secret("GOOGLE_API_KEY")
     if not api_key:
         raise EnvironmentError(
             "GOOGLE_API_KEY nicht gesetzt. Bitte .env-Datei anlegen oder Variable setzen."
