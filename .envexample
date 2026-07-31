@@ -1,0 +1,9 @@
+# Google Gemini API Key
+# Erhältlich unter: https://aistudio.google.com/apikey
+GOOGLE_API_KEY=<your_api_key>
+
+# Optional: Gemini-Modell überschreiben (Standard: gemini-2.0-flash)
+GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_LIGHT_MODEL=gemini-3.1-flash-light-preview
+
+DATABASE_URL=postgresql://postgres@localhost:5432/katastrophenschutz
