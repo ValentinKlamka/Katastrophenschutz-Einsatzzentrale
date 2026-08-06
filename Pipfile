@@ -7,9 +7,14 @@ name = "pypi"
 langchain-google-genai = "*"
 langchain-core = "*"
 langgraph = "*"
+langgraph-checkpoint-postgres = "*"
 langchain = "*"
+psycopg = {extras = ["binary"]}
 python-dotenv = "*"
-psycopg = "*"
+requests = "*"
+streamlit = "*"
+pandas = "*"
+plotly = "*"
 
 [dev-packages]
 
