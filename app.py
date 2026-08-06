@@ -13,11 +13,15 @@ from workflow import (
     EINSATZMELDUNG,
     KRANKENHAEUSER,
     _einsatz_id_generieren,
+    db_initialisieren,
     einsatz_anlegen,
     einsatz_koordinieren,
     patient_aktualisieren,
     patient_hinzufuegen,
 )
+
+# Tabellen beim ersten Start anlegen
+db_initialisieren()
 
 EINSATZ_TEMPLATES = [
     {

@@ -22,6 +22,7 @@ from katastrophenschutz import (
     KRANKENHAEUSER,
     EinsatzState,
     _einsatz_id_generieren,
+    db_initialisieren,
     einsatz_anlegen,
     einsatz_koordinieren,
     patient_aktualisieren,
@@ -34,6 +35,7 @@ __all__ = [
     "KRANKENHAEUSER",
     "EinsatzState",
     "_einsatz_id_generieren",
+    "db_initialisieren",
     "einsatz_anlegen",
     "einsatz_koordinieren",
     "patient_aktualisieren",
@@ -42,4 +44,4 @@ __all__ = [
 
 if __name__ == "__main__":
     einsatz_koordinieren()
-
+

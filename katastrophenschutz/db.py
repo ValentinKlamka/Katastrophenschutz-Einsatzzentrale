@@ -49,7 +49,35 @@ ALTER TABLE patienten ADD COLUMN IF NOT EXISTS manuell_geaendert BOOLEAN DEFAULT
 """
 
 
+_DDL_AGENT_LOGS = """
+CREATE TABLE IF NOT EXISTS agent_logs (
+    id          SERIAL PRIMARY KEY,
+    einsatz_id  TEXT,
+    agent_name  TEXT,
+    status      TEXT,
+    tool_calls  JSONB,
+    antwort     TEXT,
+    zeitstempel TIMESTAMPTZ DEFAULT now()
+);
+"""
+
+
 # ── Öffentliche API ───────────────────────────────────────────
+
+def db_initialisieren() -> None:
+    """Erstellt alle Tabellen falls noch nicht vorhanden. Beim App-Start aufrufen."""
+    try:
+        with psycopg.connect(DATABASE_URL) as conn:
+            for ddl in [_DDL_EINSAETZE, _DDL_PATIENTEN, _DDL_AGENT_LOGS]:
+                for stmt in ddl.strip().split(";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        conn.execute(stmt)
+            conn.commit()
+        print("[DB] Tabellen initialisiert.")
+    except Exception as exc:
+        print(f"[DB] Warnung: Initialisierung fehlgeschlagen – {exc}")
+
 
 def einsatz_anlegen(
     standort: str,
