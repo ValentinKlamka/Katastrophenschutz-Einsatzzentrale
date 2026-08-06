@@ -116,7 +116,16 @@ def patient_hinzufuegen(einsatz_id: str, patient_beschreibung: str) -> dict:
     """
     # Import hier um zirkuläre Abhängigkeit zu vermeiden
     from .agents.triage import triage_agent_aufbauen
-    from langchain_core.messages import HumanMessage, ToolMessage
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    agent = triage_agent_aufbauen()
+    nachrichten = [HumanMessage(content=(
+        f"Einsatz {einsatz_id}: Bewerte folgenden Patienten nach START-Schema "
+        f"und rufe patient_triage_bewerten() auf:\n\n{patient_beschreibung}"
+    ))]
+    result = _invoke_mit_fallback(agent, nachrichten, "TRIAGE-AGENT (Einzelpatient)")
+
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
     agent = triage_agent_aufbauen()
     nachrichten = [HumanMessage(content=(
@@ -136,17 +145,13 @@ def patient_hinzufuegen(einsatz_id: str, patient_beschreibung: str) -> dict:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-    if not triage_ergebnis:
-        raise RuntimeError(
-            "Triage-Agent hat kein patient_triage_bewerten-Ergebnis zurückgegeben."
-        )
-
-    from langchain_core.messages import AIMessage
     ist_fallback = "_fallback_agent" in result
+
+    # Log immer schreiben – unabhängig davon ob Triage erfolgreich war
     _agent_log_schreiben(
         einsatz_id=einsatz_id,
         agent_name="TRIAGE-AGENT",
-        status="FALLBACK" if ist_fallback else "OK",
+        status="FALLBACK" if ist_fallback else ("FEHLER" if not triage_ergebnis else "OK"),
         tool_calls=[
             {"tool": tc["name"], "args": tc.get("args", {})}
             for msg in result["messages"] if isinstance(msg, AIMessage)
@@ -154,6 +159,11 @@ def patient_hinzufuegen(einsatz_id: str, patient_beschreibung: str) -> dict:
         ],
         antwort=str(result["messages"][-1].content),
     )
+
+    if not triage_ergebnis:
+        raise RuntimeError(
+            "Triage-Agent hat kein patient_triage_bewerten-Ergebnis zurückgegeben."
+        )
 
     neuer_sg = triage_ergebnis.get("schweregrad", "UNBEKANNT")
     schweregrad_rang = {"UNBEKANNT": 0, "GRUEN": 1, "GELB": 2, "ROT": 3, "SCHWARZ": 4}
