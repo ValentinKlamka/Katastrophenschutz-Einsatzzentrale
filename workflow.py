@@ -27,6 +27,7 @@ from katastrophenschutz import (
     einsatz_koordinieren,
     patient_aktualisieren,
     patient_hinzufuegen,
+    patienten_batch_hinzufuegen,
 )
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "einsatz_koordinieren",
     "patient_aktualisieren",
     "patient_hinzufuegen",
+    "patienten_batch_hinzufuegen",
 ]
 
 if __name__ == "__main__":

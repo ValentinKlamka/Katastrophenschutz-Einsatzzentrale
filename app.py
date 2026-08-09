@@ -18,6 +18,7 @@ from workflow import (
     einsatz_koordinieren,
     patient_aktualisieren,
     patient_hinzufuegen,
+    patienten_batch_hinzufuegen,
 )
 
 # Tabellen beim ersten Start anlegen
@@ -398,33 +399,21 @@ elif seite == "➕ Neuer Einsatz":
                             if z.strip()
                         ]
                         if zeilen:
-                            ergebnisse = []
-                            progress = st.progress(0, text="Triage läuft...")
-                            for i, zeile in enumerate(zeilen):
-                                progress.progress(
-                                    (i + 1) / len(zeilen),
-                                    text=f"Triage {i+1}/{len(zeilen)}: {zeile[:45]}...",
-                                )
+                            with st.spinner(f"Triage läuft für {len(zeilen)} Patient(en)…"):
                                 try:
-                                    ergebnisse.append(
-                                        patient_hinzufuegen(eid, zeile)
+                                    ergebnisse = patienten_batch_hinzufuegen(eid, zeilen)
+                                    st.success(
+                                        f"{len(ergebnisse)} Patient(en) triagiert "
+                                        f"(1 LLM-Aufruf)."
                                     )
+                                    st.dataframe(
+                                        pd.DataFrame(ergebnisse),
+                                        use_container_width=True,
+                                        hide_index=True,
+                                    )
+                                    st.cache_data.clear()
                                 except Exception as exc:
-                                    st.warning(
-                                        f"Triage fehlgeschlagen für "
-                                        f"'{zeile[:40]}': {exc}"
-                                    )
-                            progress.empty()
-                            if ergebnisse:
-                                st.success(
-                                    f"{len(ergebnisse)} Patient(en) triagiert."
-                                )
-                                st.dataframe(
-                                    pd.DataFrame(ergebnisse),
-                                    use_container_width=True,
-                                    hide_index=True,
-                                )
-                                st.cache_data.clear()
+                                    st.warning(f"Triage fehlgeschlagen: {exc}")
                     except Exception as exc:
                         st.error(f"Fehler beim Anlegen: {exc}")
 
@@ -613,11 +602,11 @@ elif seite == "🔍 Einsatz-Detail":
     st.subheader("Patient hinzufügen")
     with st.form("patient_hinzu", border=True):
         pat_text = st.text_area(
-            "Patientenbeschreibung",
-            height=80,
+            "Patientenbeschreibungen (eine pro Zeile)",
+            height=100,
             placeholder=(
-                "P-005 – Weiblich ~28 J.: klar, Schnittwunden Hände, "
-                "leichte Rauchgasvergiftung"
+                "Weiblich ~28 J.: klar, Schnittwunden Hände, leichte Rauchgasvergiftung\n"
+                "Männlich ~40 J.: bewusstlos, eingeschränkte Atmung, schwere Brandwunden"
             ),
             label_visibility="collapsed",
         )
@@ -626,22 +615,27 @@ elif seite == "🔍 Einsatz-Detail":
         )
 
     if hinzu_btn:
-        if not pat_text.strip():
-            st.error("Bitte Patientenbeschreibung eingeben.")
+        zeilen = [z.strip() for z in pat_text.strip().splitlines() if z.strip()]
+        if not zeilen:
+            st.error("Bitte mindestens eine Patientenbeschreibung eingeben.")
         else:
-            with st.spinner("Triage-Agent läuft..."):
+            with st.spinner(f"Triage läuft für {len(zeilen)} Patient(en)…"):
                 try:
-                    ergebnis = patient_hinzufuegen(selected_id, pat_text.strip())
-                    sg_neu = ergebnis.get("schweregrad", "?")
-                    pid_neu = ergebnis.get("patient_id", "?")
-                    text_c, bg_c = SCHWEREGRAD_FARBE.get(sg_neu, ("#333", "#bdc3c7"))
-                    st.markdown(
-                        f"Patient **{pid_neu}** triagiert: "
-                        + sg_badge_html(sg_neu),
-                        unsafe_allow_html=True,
-                    )
-                    with st.expander("Details"):
-                        st.json(ergebnis)
+                    ergebnisse = patienten_batch_hinzufuegen(selected_id, zeilen)
+                    for ergebnis in ergebnisse:
+                        sg_neu = ergebnis.get("schweregrad", "?")
+                        pid_neu = ergebnis.get("patient_id", "?")
+                        st.markdown(
+                            f"Patient **{pid_neu}** triagiert: "
+                            + sg_badge_html(sg_neu),
+                            unsafe_allow_html=True,
+                        )
+                    if len(ergebnisse) > 1:
+                        with st.expander("Details"):
+                            st.json(ergebnisse)
+                    elif ergebnisse:
+                        with st.expander("Details"):
+                            st.json(ergebnisse[0])
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as exc:

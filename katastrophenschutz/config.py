@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 def _secret(key: str, default: str = "") -> str:

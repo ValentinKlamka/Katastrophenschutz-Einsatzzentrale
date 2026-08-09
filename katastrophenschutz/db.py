@@ -6,10 +6,14 @@ Alle PostgreSQL-Operationen: Einsätze anlegen, Patienten verwalten.
 from __future__ import annotations
 
 import json
+import random
+import re
+import string
 
 import psycopg
+from langchain_core.messages import HumanMessage
 
-from .config import DATABASE_URL
+from .config import DATABASE_URL, get_llm
 from .state  import EinsatzState
 from .utils  import _agent_log_schreiben, _einsatz_id_generieren, _invoke_mit_fallback
 
@@ -109,112 +113,168 @@ def einsatz_anlegen(
     return eid
 
 
-def patient_hinzufuegen(einsatz_id: str, patient_beschreibung: str) -> dict:
+def _triage_start(bewusstsein: str, atmung: str, puls: str, hauptverletzung: str) -> tuple:
+    """Deterministisches START-Triage-Schema – kein LLM erforderlich."""
+    if atmung == "keine" or puls == "kein":
+        kat, prio = "SCHWARZ", 0
+    elif bewusstsein == "bewusstlos" or atmung == "eingeschränkt" or puls == "schwach":
+        kat, prio = "ROT", 1
+    elif bewusstsein == "getrübt" or any(
+        w in hauptverletzung for w in ["Fraktur", "Blutung", "Trauma", "Schock"]
+    ):
+        kat, prio = "GELB", 2
+    else:
+        kat, prio = "GRUEN", 3
+    erstversorgung = {
+        "SCHWARZ": "Keine aktiven Maßnahmen – würdevoller Umgang",
+        "ROT":     "Sofortige lebensrettende Maßnahmen: Atemweg sichern, Blutung stillen",
+        "GELB":    "Schmerztherapie, stabile Lagerung, Überwachung",
+        "GRUEN":   "Erste Hilfe, Registrierung, Beruhigung",
+    }[kat]
+    transport = "sofort" if prio <= 1 else "baldmöglichst" if prio == 2 else "ambulant"
+    return kat, prio, erstversorgung, transport
+
+
+def _neue_patient_id() -> str:
+    chars = string.ascii_uppercase + string.digits
+    return "PAT-" + "".join(random.choices(chars, k=6))
+
+
+def patienten_batch_hinzufuegen(
+    einsatz_id: str,
+    patienten_texte: list[str],
+) -> list[dict]:
     """
-    Führt eine Triage für einen einzelnen Patienten durch und speichert das Ergebnis.
-    Gibt das Triage-Ergebnis-Dict zurück.
+    Triagiert mehrere Patienten mit EINEM einzigen LLM-Aufruf.
+    Das LLM extrahiert Vitalparameter aus dem Freitext;
+    die START-Logik wird danach deterministisch lokal angewendet.
+    Gibt eine Liste von Triage-Ergebnis-Dicts zurück.
     """
-    # Import hier um zirkuläre Abhängigkeit zu vermeiden
-    from .agents.triage import triage_agent_aufbauen
-    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    if not patienten_texte:
+        return []
 
-    agent = triage_agent_aufbauen()
-    nachrichten = [HumanMessage(content=(
-        f"Einsatz {einsatz_id}: Bewerte folgenden Patienten nach START-Schema "
-        f"und rufe patient_triage_bewerten() auf:\n\n{patient_beschreibung}"
-    ))]
-    result = _invoke_mit_fallback(agent, nachrichten, "TRIAGE-AGENT (Einzelpatient)")
+    llm = get_llm()
+    n = len(patienten_texte)
+    liste = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(patienten_texte))
 
-    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
-    agent = triage_agent_aufbauen()
-    nachrichten = [HumanMessage(content=(
-        f"Einsatz {einsatz_id}: Bewerte folgenden Patienten nach START-Schema "
-        f"und rufe patient_triage_bewerten() auf:\n\n{patient_beschreibung}"
-    ))]
-    result = _invoke_mit_fallback(agent, nachrichten, "TRIAGE-AGENT (Einzelpatient)")
-
-    # Triage-Ergebnis aus ToolMessage extrahieren
-    triage_ergebnis: dict = {}
-    for msg in result["messages"]:
-        if isinstance(msg, ToolMessage) and msg.name == "patient_triage_bewerten":
-            try:
-                triage_ergebnis = (
-                    json.loads(msg.content) if isinstance(msg.content, str) else msg.content
-                )
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-    ist_fallback = "_fallback_agent" in result
-
-    # Log immer schreiben – unabhängig davon ob Triage erfolgreich war
-    _agent_log_schreiben(
-        einsatz_id=einsatz_id,
-        agent_name="TRIAGE-AGENT",
-        status="FALLBACK" if ist_fallback else ("FEHLER" if not triage_ergebnis else "OK"),
-        tool_calls=[
-            {"tool": tc["name"], "args": tc.get("args", {})}
-            for msg in result["messages"] if isinstance(msg, AIMessage)
-            for tc in (msg.tool_calls or [])
-        ],
-        antwort=str(result["messages"][-1].content),
+    prompt = (
+        f"Du bist Sanitäter und bewertest {n} {'Patient' if n == 1 else 'Patienten'} "
+        f"nach dem START-Triage-Schema.\n\n"
+        f"Analysiere jeden Patienten und extrahiere die Vitalparameter.\n"
+        f"Erlaubte Werte:\n"
+        f"  bewusstsein: klar | getrübt | bewusstlos\n"
+        f"  atmung:      normal | eingeschränkt | keine\n"
+        f"  puls:        kräftig | schwach | kein\n"
+        f"  hauptverletzung: kurze sachliche Beschreibung\n\n"
+        f"Patienten:\n{liste}\n\n"
+        f"Antworte AUSSCHLIESSLICH mit einem JSON-Array, kein Markdown:\n"
+        f"[{{\"nr\": 1, \"bewusstsein\": \"...\", \"atmung\": \"...\", "
+        f"\"puls\": \"...\", \"hauptverletzung\": \"...\"}}]"
     )
 
-    if not triage_ergebnis:
-        raise RuntimeError(
-            "Triage-Agent hat kein patient_triage_bewerten-Ergebnis zurückgegeben."
-        )
+    response = llm.invoke([HumanMessage(content=prompt)])
+    raw = str(response.content).strip()
+    # Strip markdown code fences if present
+    raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
 
-    neuer_sg = triage_ergebnis.get("schweregrad", "UNBEKANNT")
-    schweregrad_rang = {"UNBEKANNT": 0, "GRUEN": 1, "GELB": 2, "ROT": 3, "SCHWARZ": 4}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
+        if m:
+            parsed = json.loads(m.group(0))
+        else:
+            raise RuntimeError(
+                f"LLM-Antwort konnte nicht geparst werden: {raw[:300]}"
+            )
+
+    _SCHWEREGRAD_RANG = {"UNBEKANNT": 0, "GRUEN": 1, "GELB": 2, "ROT": 3, "SCHWARZ": 4}
+    ergebnisse: list[dict] = []
 
     with psycopg.connect(DATABASE_URL) as conn:
         for stmt in _DDL_PATIENTEN.strip().split(";"):
             stmt = stmt.strip()
             if stmt:
                 conn.execute(stmt)
-        conn.execute(
-            """
-            INSERT INTO patienten
-                (einsatz_id, patient_id, schweregrad, prioritaet, erstversorgung, transport)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (einsatz_id, patient_id) DO UPDATE SET
-                schweregrad    = EXCLUDED.schweregrad,
-                prioritaet     = EXCLUDED.prioritaet,
-                erstversorgung = EXCLUDED.erstversorgung,
-                transport      = EXCLUDED.transport,
-                zeitstempel    = now();
-            """,
-            (
-                einsatz_id,
-                triage_ergebnis.get("patient_id"),
-                neuer_sg,
-                triage_ergebnis.get("prioritaet"),
-                triage_ergebnis.get("erstversorgung"),
-                triage_ergebnis.get("transport"),
-            ),
-        )
-        conn.execute(
-            """
-            UPDATE einsaetze SET
-                schweregrad = %s,
-                triage_ok   = TRUE
-            WHERE einsatz_id = %s
-              AND %s > COALESCE(
-                (SELECT rang FROM (VALUES
-                    ('UNBEKANNT',0),('GRUEN',1),('GELB',2),('ROT',3),('SCHWARZ',4)
-                ) AS t(sg, rang) WHERE sg = einsaetze.schweregrad), 0
-              );
-            """,
-            (neuer_sg, einsatz_id, schweregrad_rang.get(neuer_sg, 0)),
-        )
+
+        for item in parsed:
+            bewusstsein    = item.get("bewusstsein",    "klar")
+            atmung         = item.get("atmung",         "normal")
+            puls           = item.get("puls",           "kräftig")
+            hauptverletzung = item.get("hauptverletzung", "")
+
+            kat, prio, erstversorgung, transport = _triage_start(
+                bewusstsein, atmung, puls, hauptverletzung
+            )
+            pid = _neue_patient_id()
+
+            conn.execute(
+                """
+                INSERT INTO patienten
+                    (einsatz_id, patient_id, schweregrad, prioritaet, erstversorgung, transport)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (einsatz_id, patient_id) DO UPDATE SET
+                    schweregrad    = EXCLUDED.schweregrad,
+                    prioritaet     = EXCLUDED.prioritaet,
+                    erstversorgung = EXCLUDED.erstversorgung,
+                    transport      = EXCLUDED.transport,
+                    zeitstempel    = now();
+                """,
+                (einsatz_id, pid, kat, prio, erstversorgung, transport),
+            )
+            ergebnisse.append({
+                "patient_id":    pid,
+                "schweregrad":   kat,
+                "prioritaet":    prio,
+                "erstversorgung": erstversorgung,
+                "transport":     transport,
+            })
+
+        # Einsatz-Schweregrad auf höchsten Patienten-Schweregrad anheben
+        if ergebnisse:
+            max_sg = max(
+                ergebnisse,
+                key=lambda e: _SCHWEREGRAD_RANG.get(e["schweregrad"], 0),
+            )["schweregrad"]
+            conn.execute(
+                """
+                UPDATE einsaetze SET
+                    schweregrad = %s,
+                    triage_ok   = TRUE
+                WHERE einsatz_id = %s
+                  AND %s > COALESCE(
+                    (SELECT rang FROM (VALUES
+                        ('UNBEKANNT',0),('GRUEN',1),('GELB',2),('ROT',3),('SCHWARZ',4)
+                    ) AS t(sg, rang) WHERE sg = einsaetze.schweregrad), 0
+                  );
+                """,
+                (max_sg, einsatz_id, _SCHWEREGRAD_RANG.get(max_sg, 0)),
+            )
         conn.commit()
 
-    print(
-        f"[DB] Patient {triage_ergebnis.get('patient_id')} ({neuer_sg}) "
-        f"zu Einsatz {einsatz_id} hinzugefügt."
+    _agent_log_schreiben(
+        einsatz_id=einsatz_id,
+        agent_name="TRIAGE-BATCH",
+        status="OK",
+        tool_calls=[],
+        antwort=(
+            f"{len(ergebnisse)} Patient(en) triagiert: "
+            + str([e["schweregrad"] for e in ergebnisse])
+        ),
     )
-    return triage_ergebnis
+    print(f"[DB] {len(ergebnisse)} Patient(en) zu Einsatz {einsatz_id} hinzugefügt.")
+    return ergebnisse
+
+
+def patient_hinzufuegen(einsatz_id: str, patient_beschreibung: str) -> dict:
+    """
+    Triagiert einen einzelnen Patienten (dünner Wrapper um patienten_batch_hinzufuegen).
+    Gibt das Triage-Ergebnis-Dict zurück.
+    """
+    ergebnisse = patienten_batch_hinzufuegen(einsatz_id, [patient_beschreibung])
+    if not ergebnisse:
+        raise RuntimeError("Triage hat kein Ergebnis zurückgegeben.")
+    return ergebnisse[0]
 
 
 def patient_aktualisieren(

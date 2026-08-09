@@ -6,7 +6,7 @@ Katastrophenschutz-Paket
 from .config import DATABASE_URL, EINSATZMELDUNG, GEMINI_MODEL, KRANKENHAEUSER, get_llm
 from .state  import EinsatzState
 from .utils  import _einsatz_id_generieren
-from .db     import db_initialisieren, einsatz_anlegen, einsatz_speichern, patient_aktualisieren, patient_hinzufuegen
+from .db     import db_initialisieren, einsatz_anlegen, einsatz_speichern, patient_aktualisieren, patient_hinzufuegen, patienten_batch_hinzufuegen
 from .graph  import einsatz_koordinieren, graph_erstellen
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     "einsatz_speichern",
     "patient_aktualisieren",
     "patient_hinzufuegen",
+    "patienten_batch_hinzufuegen",
     # graph
     "einsatz_koordinieren",
     "graph_erstellen",
