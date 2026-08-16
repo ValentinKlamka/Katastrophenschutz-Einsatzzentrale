@@ -157,19 +157,23 @@ def patienten_batch_hinzufuegen(
     n = len(patienten_texte)
     liste = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(patienten_texte))
 
+    beispiel = ", ".join(
+        f'{{\"nr\": {i+1}, \"bewusstsein\": \"...\", \"atmung\": \"...\", \"puls\": \"...\", \"hauptverletzung\": \"...\"}}'
+        for i in range(n)
+    )
     prompt = (
         f"Du bist Sanitäter und bewertest {n} {'Patient' if n == 1 else 'Patienten'} "
         f"nach dem START-Triage-Schema.\n\n"
-        f"Analysiere jeden Patienten und extrahiere die Vitalparameter.\n"
+        f"Analysiere JEDEN der {n} Patienten und extrahiere die Vitalparameter.\n"
         f"Erlaubte Werte:\n"
         f"  bewusstsein: klar | getrübt | bewusstlos\n"
         f"  atmung:      normal | eingeschränkt | keine\n"
         f"  puls:        kräftig | schwach | kein\n"
         f"  hauptverletzung: kurze sachliche Beschreibung\n\n"
         f"Patienten:\n{liste}\n\n"
-        f"Antworte AUSSCHLIESSLICH mit einem JSON-Array, kein Markdown:\n"
-        f"[{{\"nr\": 1, \"bewusstsein\": \"...\", \"atmung\": \"...\", "
-        f"\"puls\": \"...\", \"hauptverletzung\": \"...\"}}]"
+        f"WICHTIG: Das Array muss GENAU {n} Einträge enthalten (einen pro Patient).\n"
+        f"Antworte AUSSCHLIESSLICH mit einem JSON-Array, kein Markdown, kein Text davor/danach:\n"
+        f"[{beispiel}]"
     )
 
     response = llm.invoke([HumanMessage(content=prompt)])
@@ -203,6 +207,15 @@ def patienten_batch_hinzufuegen(
 
     parsed = _parse(raw)
 
+    # If LLM returned fewer entries than patients, fill the rest with safe defaults
+    if len(parsed) < n:
+        print(
+            f"[TRIAGE-BATCH] Warnung: LLM lieferte {len(parsed)} von {n} Einträgen – "
+            f"fehlende mit Standardwerten aufgefüllt."
+        )
+        for _ in range(n - len(parsed)):
+            parsed.append({"bewusstsein": "klar", "atmung": "normal", "puls": "kräftig", "hauptverletzung": "unbekannt"})
+
     _SCHWEREGRAD_RANG = {"UNBEKANNT": 0, "GRUEN": 1, "GELB": 2, "ROT": 3, "SCHWARZ": 4}
     ergebnisse: list[dict] = []
 
@@ -212,7 +225,7 @@ def patienten_batch_hinzufuegen(
             if stmt:
                 conn.execute(stmt)
 
-        for item in parsed:
+        for item in parsed[:n]:
             bewusstsein    = item.get("bewusstsein",    "klar")
             atmung         = item.get("atmung",         "normal")
             puls           = item.get("puls",           "kräftig")
