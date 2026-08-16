@@ -42,15 +42,24 @@ def ressourcen_agent_aufbauen():
 def ressourcen_node(state: EinsatzState) -> dict:
     print("\n[RESSOURCEN-AGENT] Starte A2A-Verhandlung mit Krankenhaus-Agenten...")
     agent  = ressourcen_agent_aufbauen()
+
+    patienten = state.get("patienten", [])
+    transportpatienten = [p for p in patienten if p.get("schweregrad") != "SCHWARZ"]
+    pat_liste = "\n".join(
+        f"  - {p['patient_id']}: {p['schweregrad']} (Priorität {p['prioritaet']})"
+        for p in transportpatienten
+    ) or "  (keine transportpflichtigen Patienten)"
+
     result = _invoke_mit_fallback(
         agent,
         _kontext(
             state,
-            f"Schweregrad: {state.get('schweregrad', 'ROT')}\n"
+            f"Zu versorgende Patienten ({len(transportpatienten)} transportpflichtig, "
+            f"SCHWARZ-Patienten ausgeschlossen):\n{pat_liste}\n\n"
             "Koordiniere Ressourcen. Frage ALLE fünf Krankenhäuser per A2A an "
             "(Klinikum_Stadtmitte, St_Marien_Krankenhaus, Stadtspital_Nord, "
             "Kreiskrankenhaus_Sued, Uniklinik_Zentrum) "
-            "und wähle das optimale für ROT/SCHWARZ- und GELB/GRUEN-Patienten.",
+            "und weise jedem transportpflichtigen Patienten ein passendes Krankenhaus zu.",
         ),
         "RESSOURCEN-AGENT",
     )

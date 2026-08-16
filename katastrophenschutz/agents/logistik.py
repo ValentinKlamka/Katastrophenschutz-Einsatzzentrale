@@ -35,12 +35,23 @@ def logistik_agent_aufbauen():
 def logistik_node(state: EinsatzState) -> dict:
     print("\n[LOGISTIK-AGENT] Starte Transportplanung...")
     agent  = logistik_agent_aufbauen()
+
+    patienten = state.get("patienten", [])
+    transportpatienten = [p for p in patienten if p.get("schweregrad") != "SCHWARZ"]
+    pat_liste = "\n".join(
+        f"  - {p['patient_id']}: {p['schweregrad']} | Erstversorgung: {p.get('erstversorgung','')} | Transport: {p.get('transport','')}"
+        for p in transportpatienten
+    ) or "  (keine transportpflichtigen Patienten)"
+
     result = _invoke_mit_fallback(
         agent,
         _kontext(
             state,
             f"Plane Patiententransporte von '{state['standort']}' zu den zugewiesenen Kliniken.\n"
-            f"Schweregrad: {state.get('schweregrad', 'ROT')} – ROT-Patienten haben Priorität.",
+            f"Transportpflichtige Patienten ({len(transportpatienten)}, SCHWARZ ausgeschlossen):\n"
+            f"{pat_liste}\n\n"
+            "Plane für JEDEN dieser Patienten einen Transport (transport_einplanen). "
+            "ROT-Patienten haben absolute Priorität.",
         ),
         "LOGISTIK-AGENT",
     )
