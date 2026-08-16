@@ -43,7 +43,11 @@ def graph_erstellen(checkpointer=None):
     return g.compile(checkpointer=checkpointer)
 
 
-def einsatz_koordinieren(meldung: str = EINSATZMELDUNG) -> EinsatzState:
+def einsatz_koordinieren(
+    meldung: str = EINSATZMELDUNG,
+    einsatz_id: str | None = None,
+    standort: str = "UNBEKANNT",
+) -> EinsatzState:
     """Startet und koordiniert den vollständigen Notfalleinsatz über A2A-Workflow."""
     print("\n" + "═" * 65)
     print("  KATASTROPHENSCHUTZ-EINSATZLEITZENTRALE")
@@ -52,8 +56,8 @@ def einsatz_koordinieren(meldung: str = EINSATZMELDUNG) -> EinsatzState:
     print(meldung.strip())
     print("─" * 65)
 
-    einsatz_id = _einsatz_id_generieren()
-    print(f"  Einsatz-ID:  {einsatz_id}")
+    eid = einsatz_id or _einsatz_id_generieren()
+    print(f"  Einsatz-ID:  {eid}")
     print("─" * 65)
 
     with PostgresSaver.from_conn_string(DATABASE_URL) as checkpointer:
@@ -62,8 +66,8 @@ def einsatz_koordinieren(meldung: str = EINSATZMELDUNG) -> EinsatzState:
 
         initialer_state: EinsatzState = {
             "messages":             [HumanMessage(content=meldung)],
-            "einsatz_id":           einsatz_id,
-            "standort":             "UNBEKANNT",
+            "einsatz_id":           eid,
+            "standort":             standort,
             "beschreibung":         meldung,
             "schweregrad":          "UNBEKANNT",
             "triage_abgeschlossen": False,
@@ -79,7 +83,7 @@ def einsatz_koordinieren(meldung: str = EINSATZMELDUNG) -> EinsatzState:
             initialer_state,
             config={
                 "recursion_limit": 50,
-                "configurable":    {"thread_id": einsatz_id},
+                "configurable":    {"thread_id": eid},
             },
         )
 

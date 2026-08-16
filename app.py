@@ -377,45 +377,45 @@ elif seite == "➕ Neuer Einsatz":
                 label_visibility="collapsed",
             )
 
-            submitted = st.form_submit_button("Einsatz anlegen", type="primary")
+            submitted = st.form_submit_button("▶ Einsatz anlegen & Workflow starten", type="primary")
 
         if submitted:
             if not standort.strip() or not beschreibung.strip():
                 st.error("Standort und Beschreibung sind Pflichtfelder.")
             else:
-                with st.spinner("Einsatz wird angelegt..."):
-                    try:
-                        eid = einsatz_anlegen(
-                            standort=standort.strip(),
-                            beschreibung=beschreibung.strip(),
-                            einsatz_id=einsatz_id_input.strip() or None,
-                        )
-                        st.success(f"Einsatz **{eid}** angelegt.")
-                        st.cache_data.clear()
+                # Meldung aus Formularfeldern zusammenbauen
+                zeilen = [
+                    z.strip()
+                    for z in patienten_text.strip().splitlines()
+                    if z.strip()
+                ]
+                meldung_teile = [
+                    f"Standort: {standort.strip()}",
+                    f"Lagebeschreibung: {beschreibung.strip()}",
+                ]
+                if zeilen:
+                    meldung_teile.append("Patienten:\n" + "\n".join(f"- {z}" for z in zeilen))
+                meldung_komplett = "\n\n".join(meldung_teile)
 
-                        zeilen = [
-                            z.strip()
-                            for z in patienten_text.strip().splitlines()
-                            if z.strip()
-                        ]
-                        if zeilen:
-                            with st.spinner(f"Triage läuft für {len(zeilen)} Patient(en)…"):
-                                try:
-                                    ergebnisse = patienten_batch_hinzufuegen(eid, zeilen)
-                                    st.success(
-                                        f"{len(ergebnisse)} Patient(en) triagiert "
-                                        f"(1 LLM-Aufruf)."
-                                    )
-                                    st.dataframe(
-                                        pd.DataFrame(ergebnisse),
-                                        use_container_width=True,
-                                        hide_index=True,
-                                    )
-                                    st.cache_data.clear()
-                                except Exception as exc:
-                                    st.warning(f"Triage fehlgeschlagen: {exc}")
+                with st.spinner("A2A-Workflow läuft … (Triage → Ressourcen → Logistik → Kommunikation)"):
+                    try:
+                        final = einsatz_koordinieren(
+                            meldung=meldung_komplett,
+                            einsatz_id=einsatz_id_input.strip() or None,
+                            standort=standort.strip(),
+                        )
+                        eid = final["einsatz_id"]
+                        st.success(f"Einsatz **{eid}** angelegt und vollständig koordiniert.")
+                        st.cache_data.clear()
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("Schweregrad", final["schweregrad"])
+                        c2.metric("Triage",      "✓" if final.get("triage_abgeschlossen") else "✗")
+                        c3.metric("Runden",      final.get("runden", 0))
+                        c4.metric("Patienten",   len(final.get("patienten", [])))
+                        if final.get("fallbacks"):
+                            st.warning(f"⚠ Fallbacks: {', '.join(final['fallbacks'])}")
                     except Exception as exc:
-                        st.error(f"Fehler beim Anlegen: {exc}")
+                        st.error(f"Fehler beim Workflow: {exc}")
 
     # ── Tab: Vollständiger Workflow ───────────────────────────
     with tab_workflow:
