@@ -113,28 +113,6 @@ def einsatz_anlegen(
     return eid
 
 
-def _triage_start(bewusstsein: str, atmung: str, puls: str, hauptverletzung: str) -> tuple:
-    """Deterministisches START-Triage-Schema – kein LLM erforderlich."""
-    if atmung == "keine" or puls == "kein":
-        kat, prio = "SCHWARZ", 0
-    elif bewusstsein == "bewusstlos" or atmung == "eingeschränkt" or puls == "schwach":
-        kat, prio = "ROT", 1
-    elif bewusstsein == "getrübt" or any(
-        w in hauptverletzung for w in ["Fraktur", "Blutung", "Trauma", "Schock"]
-    ):
-        kat, prio = "GELB", 2
-    else:
-        kat, prio = "GRUEN", 3
-    erstversorgung = {
-        "SCHWARZ": "Keine aktiven Maßnahmen – würdevoller Umgang",
-        "ROT":     "Sofortige lebensrettende Maßnahmen: Atemweg sichern, Blutung stillen",
-        "GELB":    "Schmerztherapie, stabile Lagerung, Überwachung",
-        "GRUEN":   "Erste Hilfe, Registrierung, Beruhigung",
-    }[kat]
-    transport = "sofort" if prio <= 1 else "baldmöglichst" if prio == 2 else "ambulant"
-    return kat, prio, erstversorgung, transport
-
-
 def _neue_patient_id() -> str:
     chars = string.ascii_uppercase + string.digits
     return "PAT-" + "".join(random.choices(chars, k=6))
@@ -146,8 +124,7 @@ def patienten_batch_hinzufuegen(
 ) -> list[dict]:
     """
     Triagiert mehrere Patienten mit EINEM einzigen LLM-Aufruf.
-    Das LLM extrahiert Vitalparameter aus dem Freitext;
-    die START-Logik wird danach deterministisch lokal angewendet.
+    Das LLM klassifiziert direkt nach START-Schema.
     Gibt eine Liste von Triage-Ergebnis-Dicts zurück.
     """
     if not patienten_texte:
@@ -158,29 +135,27 @@ def patienten_batch_hinzufuegen(
     liste = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(patienten_texte))
 
     beispiel = ", ".join(
-        f'{{\"nr\": {i+1}, \"bewusstsein\": \"...\", \"atmung\": \"...\", \"puls\": \"...\", \"hauptverletzung\": \"...\"}}'
+        f'{{"nr": {i+1}, "schweregrad": "SCHWARZ|ROT|GELB|GRUEN", "prioritaet": 0|1|2|3, "erstversorgung": "...", "transport": "sofort|baldmöglichst|ambulant"}}'
         for i in range(n)
     )
     prompt = (
-        f"Du bist Sanitäter und bewertest {n} {'Patient' if n == 1 else 'Patienten'} "
-        f"nach dem START-Triage-Schema.\n\n"
-        f"Analysiere JEDEN der {n} Patienten und extrahiere die Vitalparameter.\n"
-        f"Erlaubte Werte:\n"
-        f"  bewusstsein: klar | getrübt | bewusstlos\n"
-        f"  atmung:      normal | eingeschränkt | keine\n"
-        f"  puls:        kräftig | schwach | kein\n"
-        f"  hauptverletzung: kurze sachliche Beschreibung\n\n"
+        f"Du bist Notarzt und führst die Triage für {n} {'Patient' if n == 1 else 'Patienten'} "
+        f"nach dem START-Schema durch.\n\n"
+        f"Klassifiziere JEDEN der {n} Patienten direkt. Verwende NUR diese exakten Werte:\n"
+        f"  schweregrad:  \"SCHWARZ\" (verstorben/hoffnungslos)  |  \"ROT\" (sofortige Behandlung)  |"
+        f"  \"GELB\" (aufgeschobene Behandlung)  |  \"GRUEN\" (leicht verletzt)\n"
+        f"  prioritaet:   0 (SCHWARZ)  |  1 (ROT)  |  2 (GELB)  |  3 (GRUEN)\n"
+        f"  erstversorgung: kurze medizinische Maßnahme\n"
+        f"  transport:    \"sofort\"  |  \"baldmöglichst\"  |  \"ambulant\"\n\n"
         f"Patienten:\n{liste}\n\n"
-        f"WICHTIG: Das Array muss GENAU {n} Einträge enthalten (einen pro Patient).\n"
-        f"Antworte AUSSCHLIESSLICH mit einem JSON-Array, kein Markdown, kein Text davor/danach:\n"
+        f"WICHTIG: Das Array muss GENAU {n} Objekte enthalten (einen pro Patient, gleiche Reihenfolge).\n"
+        f"Antworte NUR mit dem JSON-Array, kein Markdown, kein Text davor/danach:\n"
         f"[{beispiel}]"
     )
 
     response = llm.invoke([HumanMessage(content=prompt)])
     raw = str(response.content).strip()
-    # Strip markdown code fences
     raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
-    # Extract the JSON array portion
     m = re.search(r"\[.*\]", raw, re.DOTALL)
     raw = m.group(0) if m else raw
 
@@ -190,13 +165,11 @@ def patienten_batch_hinzufuegen(
             return json.loads(text)
         except json.JSONDecodeError:
             pass
-        # Remove trailing commas before ] or } (common LLM mistake)
         cleaned = re.sub(r",\s*([\]}])", r"\1", text)
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
             pass
-        # Last resort: Python literal (handles single-quoted strings)
         try:
             result = ast.literal_eval(text)
             if isinstance(result, list):
@@ -207,14 +180,16 @@ def patienten_batch_hinzufuegen(
 
     parsed = _parse(raw)
 
-    # If LLM returned fewer entries than patients, fill the rest with safe defaults
     if len(parsed) < n:
         print(
             f"[TRIAGE-BATCH] Warnung: LLM lieferte {len(parsed)} von {n} Einträgen – "
-            f"fehlende mit Standardwerten aufgefüllt."
+            f"fehlende mit GRUEN aufgefüllt."
         )
         for _ in range(n - len(parsed)):
-            parsed.append({"bewusstsein": "klar", "atmung": "normal", "puls": "kräftig", "hauptverletzung": "unbekannt"})
+            parsed.append({
+                "schweregrad": "GRUEN", "prioritaet": 3,
+                "erstversorgung": "Erste Hilfe, Registrierung", "transport": "ambulant",
+            })
 
     _SCHWEREGRAD_RANG = {"UNBEKANNT": 0, "GRUEN": 1, "GELB": 2, "ROT": 3, "SCHWARZ": 4}
     ergebnisse: list[dict] = []
@@ -226,14 +201,12 @@ def patienten_batch_hinzufuegen(
                 conn.execute(stmt)
 
         for item in parsed[:n]:
-            bewusstsein    = item.get("bewusstsein",    "klar")
-            atmung         = item.get("atmung",         "normal")
-            puls           = item.get("puls",           "kräftig")
-            hauptverletzung = item.get("hauptverletzung", "")
-
-            kat, prio, erstversorgung, transport = _triage_start(
-                bewusstsein, atmung, puls, hauptverletzung
-            )
+            kat            = item.get("schweregrad",   "GRUEN").upper()
+            prio           = item.get("prioritaet",    3)
+            erstversorgung = item.get("erstversorgung", "")
+            transport      = item.get("transport",     "ambulant")
+            if kat not in _SCHWEREGRAD_RANG:
+                kat = "GRUEN"
             pid = _neue_patient_id()
 
             conn.execute(
@@ -251,14 +224,13 @@ def patienten_batch_hinzufuegen(
                 (einsatz_id, pid, kat, prio, erstversorgung, transport),
             )
             ergebnisse.append({
-                "patient_id":    pid,
-                "schweregrad":   kat,
-                "prioritaet":    prio,
+                "patient_id":     pid,
+                "schweregrad":    kat,
+                "prioritaet":     prio,
                 "erstversorgung": erstversorgung,
-                "transport":     transport,
+                "transport":      transport,
             })
 
-        # Einsatz-Schweregrad auf höchsten Patienten-Schweregrad anheben
         if ergebnisse:
             max_sg = max(
                 ergebnisse,
