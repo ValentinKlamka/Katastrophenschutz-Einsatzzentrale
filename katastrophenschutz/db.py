@@ -174,19 +174,34 @@ def patienten_batch_hinzufuegen(
 
     response = llm.invoke([HumanMessage(content=prompt)])
     raw = str(response.content).strip()
-    # Strip markdown code fences if present
+    # Strip markdown code fences
     raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+    # Extract the JSON array portion
+    m = re.search(r"\[.*\]", raw, re.DOTALL)
+    raw = m.group(0) if m else raw
 
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        m = re.search(r"\[.*\]", raw, re.DOTALL)
-        if m:
-            parsed = json.loads(m.group(0))
-        else:
-            raise RuntimeError(
-                f"LLM-Antwort konnte nicht geparst werden: {raw[:300]}"
-            )
+    def _parse(text: str):
+        import ast
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Remove trailing commas before ] or } (common LLM mistake)
+        cleaned = re.sub(r",\s*([\]}])", r"\1", text)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+        # Last resort: Python literal (handles single-quoted strings)
+        try:
+            result = ast.literal_eval(text)
+            if isinstance(result, list):
+                return result
+        except (ValueError, SyntaxError):
+            pass
+        raise RuntimeError(f"LLM-Antwort konnte nicht geparst werden: {text[:300]}")
+
+    parsed = _parse(raw)
 
     _SCHWEREGRAD_RANG = {"UNBEKANNT": 0, "GRUEN": 1, "GELB": 2, "ROT": 3, "SCHWARZ": 4}
     ergebnisse: list[dict] = []
