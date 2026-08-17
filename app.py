@@ -652,7 +652,11 @@ elif seite == "🔍 Einsatz-Detail":
         if st.button("▶ Workflow starten", type="primary"):
             with st.spinner("Workflow läuft..."):
                 try:
-                    final = einsatz_koordinieren(beschreibung or selected_id)
+                    final = einsatz_koordinieren(
+                        meldung=beschreibung or selected_id,
+                        einsatz_id=selected_id,
+                        standort=standort or "UNBEKANNT",
+                    )
                     st.success("Workflow abgeschlossen.")
                     st.cache_data.clear()
                     st.rerun()
