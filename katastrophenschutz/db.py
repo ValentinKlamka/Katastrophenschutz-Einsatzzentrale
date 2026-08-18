@@ -135,21 +135,43 @@ def patienten_batch_hinzufuegen(
     liste = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(patienten_texte))
 
     beispiel = ", ".join(
-        f'{{"nr": {i+1}, "schweregrad": "SCHWARZ|ROT|GELB|GRUEN", "prioritaet": 0|1|2|3, "erstversorgung": "...", "transport": "sofort|baldmöglichst|ambulant"}}'
+        f'{{"nr": {i+1}, "schweregrad": "ROT", "prioritaet": 1, "erstversorgung": "...", "transport": "sofort|baldmöglichst|ambulant|kein Transport"}}'
         for i in range(n)
     )
     prompt = (
-        f"Du bist Notarzt und führst die Triage für {n} {'Patient' if n == 1 else 'Patienten'} "
-        f"nach dem START-Schema durch.\n\n"
-        f"Klassifiziere JEDEN der {n} Patienten direkt. Verwende NUR diese exakten Werte:\n"
-        f"  schweregrad:  \"SCHWARZ\" (verstorben/hoffnungslos)  |  \"ROT\" (sofortige Behandlung)  |"
-        f"  \"GELB\" (aufgeschobene Behandlung)  |  \"GRUEN\" (leicht verletzt)\n"
-        f"  prioritaet:   0 (SCHWARZ)  |  1 (ROT)  |  2 (GELB)  |  3 (GRUEN)\n"
-        f"  erstversorgung: kurze medizinische Maßnahme\n"
-        f"  transport:    \"sofort\"  |  \"baldmöglichst\"  |  \"ambulant\"\n\n"
-        f"Patienten:\n{liste}\n\n"
-        f"WICHTIG: Das Array muss GENAU {n} Objekte enthalten (einen pro Patient, gleiche Reihenfolge).\n"
-        f"Antworte NUR mit dem JSON-Array, kein Markdown, kein Text davor/danach:\n"
+        "Du bist Notarzt an einem Massenanfall von Verletzten (MANV) und führst die Triage "
+        "nach dem START-Schema durch.\n\n"
+        "## START-SCHEMA – Klassifikationsregeln (in dieser Reihenfolge prüfen)\n\n"
+        "**SCHWARZ** – Verstorben oder hoffnungslos:\n"
+        "- Keine Eigenatmung trotz Atemwegsöffnung\n"
+        "- Keine Lebenszeichen, kein Puls\n"
+        "- Verletzungen nicht mit dem Leben vereinbar\n\n"
+        "**ROT** – Sofortbehandlung (lebensbedrohlich, aber behandelbar):\n"
+        "- Atemfrequenz < 10 oder > 29/min, oder Atmung nur nach Atemwegsöffnung\n"
+        "- Kapilläre Füllungszeit > 2 Sekunden oder kein radialer Puls\n"
+        "- Bewusstlosigkeit oder stark reduziertes Bewusstsein (GCS < 14)\n"
+        "- Starke, schwer stillbare Blutung\n"
+        "- Schockzeichen (kalte/blasse Haut, schwacher/fadenförmiger Puls)\n\n"
+        "**GELB** – Aufgeschobene Behandlung (ernst, aber stabil):\n"
+        "- Atemwege frei, Atmung ausreichend, Kreislauf stabil\n"
+        "- Aber: offene Frakturen, geschlossene Frakturen langer Röhrenknochen\n"
+        "- Mittelschwere Verbrennungen (10–20% KOF)\n"
+        "- Getrübtes Bewusstsein ohne akute Vitalbedrohung\n"
+        "- Rückenverletzungen mit neurologischen Ausfällen\n\n"
+        "**GRUEN** – Leichtverletzt / kann warten:\n"
+        "- Gehfähig, orientiert, keine lebensbedrohlichen Verletzungen\n"
+        "- Kleinere Wunden, leichte Prellungen, leichte Verbrennungen\n"
+        "- Stabile Vitalzeichen\n\n"
+        f"## Zu triagierender{'r Patient' if n == 1 else 'e Patienten'} ({n} gesamt)\n\n"
+        f"{liste}\n\n"
+        "## Ausgabeformat\n"
+        f"Antworte mit einem JSON-Array mit GENAU {n} Objekten (gleiche Reihenfolge wie oben).\n"
+        "Erlaubte Werte:\n"
+        "  schweregrad: \"SCHWARZ\" | \"ROT\" | \"GELB\" | \"GRUEN\"\n"
+        "  prioritaet:  0 (SCHWARZ) | 1 (ROT) | 2 (GELB) | 3 (GRUEN)\n"
+        "  erstversorgung: konkrete medizinische Sofortmaßnahme\n"
+        "  transport: \"sofort\" (ROT) | \"baldmöglichst\" (GELB) | \"ambulant\" (GRUEN) | \"kein Transport\" (SCHWARZ)\n\n"
+        "Nur das JSON-Array ausgeben, kein Markdown, kein Text:\n"
         f"[{beispiel}]"
     )
 
@@ -207,6 +229,11 @@ def patienten_batch_hinzufuegen(
             transport      = item.get("transport",     "ambulant")
             if kat not in _SCHWEREGRAD_RANG:
                 kat = "GRUEN"
+            # Enforce correct values for SCHWARZ regardless of LLM output
+            if kat == "SCHWARZ":
+                prio           = 0
+                erstversorgung = "Keine aktiven Maßnahmen – würdevoller Umgang"
+                transport      = "kein Transport"
             pid = _neue_patient_id()
 
             conn.execute(
